@@ -1,5 +1,5 @@
 // 画面ファイルだけをキャッシュする（会話やAPIの通信はキャッシュしない）
-const CACHE = 'jervis-v5';
+const CACHE = 'jervis-v6';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'memo.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -18,6 +18,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith('version.json')) return; // 更新確認は常にネットから
   e.respondWith(
     fetch(e.request)
       .then((res) => {

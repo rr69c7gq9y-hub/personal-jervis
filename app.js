@@ -432,6 +432,27 @@ $('memoAddForm').addEventListener('submit', (e) => {
 renderMemos();
 updateSpeakButton();
 renderAll();
+// ===== 自動アップデート =====
+// ホーム画面から開いたアプリは前回の画面のまま再開されるため、開くたびに新しい版が出ていないか確認する
+const APP_VERSION = 6; // version.json と揃えて上げる
+async function checkForUpdate() {
+  if (busy) return; // 返事を待っている間は再読み込みしない
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    const { version } = await res.json();
+    if (!(Number(version) > APP_VERSION)) return;
+    // 古いファイルが返ってきても再読み込みを繰り返さないよう、1つの版につき1回だけ
+    const key = 'jervis.reloadedFor';
+    let done = null;
+    try { done = sessionStorage.getItem(key); } catch { /* noop */ }
+    if (done === String(version)) return;
+    try { sessionStorage.setItem(key, String(version)); } catch { return; }
+    location.reload();
+  } catch { /* オフラインなどで確認できなければ何もしない */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
+checkForUpdate();
+
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => { /* オフラインキャッシュなしでも動く */ });
 }
