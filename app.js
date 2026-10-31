@@ -294,7 +294,12 @@ function updateSpeakButton() {
   speakToggle.setAttribute('aria-pressed', String(on));
 }
 function speak(text) {
-  if (!speakEnabled() || !('speechSynthesis' in window)) return;
+  if (!speakEnabled()) return;
+  speakNow(text);
+}
+// 読み上げ設定に関係なく読む（ボタンを押したときなど）
+function speakNow(text) {
+  if (!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
   const plain = text.replace(/```[\s\S]*?```/g, '（コードは省略）').replace(/[*`#]/g, '');
   const u = new SpeechSynthesisUtterance(plain);
@@ -451,13 +456,125 @@ $('memoAddForm').addEventListener('submit', (e) => {
   renderMemos();
 });
 
+// ===== 今日のメモ（1日の最初に開いたときに表示） =====
+const BRIEFING_KEY = 'jervis.briefingDate';
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h >= 4 && h < 11) return 'おはようございます、ボス。';
+  if (h >= 11 && h < 18) return 'お疲れさまです、ボス。';
+  return 'こんばんは、ボス。';
+}
+
+// 期限切れ・今日・明日・期限なしに分ける
+function briefingGroups() {
+  const today = todayYmd();
+  const tomorrow = toYmd(new Date(Date.now() + 86400000));
+  const open = Memo.open();
+  return {
+    overdue: open.filter((m) => m.due && m.due < today),
+    today: open.filter((m) => m.due === today),
+    tomorrow: open.filter((m) => m.due === tomorrow),
+    later: open.filter((m) => m.due && m.due > tomorrow),
+    undated: open.filter((m) => !m.due),
+  };
+}
+
+function briefingSpeech(g) {
+  const parts = [greeting()];
+  const say = (label, list) => { if (list.length) parts.push(`${label}は${list.length}件。${list.map((m) => m.text).join('。')}。`); };
+  say('期限を過ぎているもの', g.overdue);
+  say('今日のメモ', g.today);
+  say('明日のメモ', g.tomorrow);
+  if (!g.overdue.length && !g.today.length && !g.tomorrow.length) parts.push('今日と明日が期限のメモはありません。');
+  if (g.undated.length) parts.push(`ほかに期限なしのメモが${g.undated.length}件あります。`);
+  return parts.join('');
+}
+
+function showBriefing() {
+  document.querySelectorAll('.briefing').forEach((el) => el.remove());
+  const g = briefingGroups();
+  const card = document.createElement('section');
+  card.className = 'briefing';
+
+  const now = new Date();
+  const h = document.createElement('div');
+  h.className = 'briefing-head';
+  h.textContent = `🗓 ${now.getMonth() + 1}/${now.getDate()}(${WEEKDAYS[now.getDay()]}) のメモ`;
+  const hello = document.createElement('div');
+  hello.className = 'briefing-hello';
+  hello.textContent = greeting();
+  card.append(h, hello);
+
+  const section = (title, list, cls) => {
+    if (!list.length) return;
+    const t = document.createElement('div');
+    t.className = `briefing-title ${cls || ''}`;
+    t.textContent = `${title}（${list.length}）`;
+    const ul = document.createElement('ul');
+    list.slice(0, 8).forEach((m) => {
+      const li = document.createElement('li');
+      li.textContent = m.text + (cls === 'overdue' || cls === 'later' ? `（${dueLabel(m.due)}）` : '');
+      ul.appendChild(li);
+    });
+    if (list.length > 8) {
+      const li = document.createElement('li');
+      li.textContent = `ほか${list.length - 8}件`;
+      ul.appendChild(li);
+    }
+    card.append(t, ul);
+  };
+  section('期限切れ', g.overdue, 'overdue');
+  section('今日', g.today, 'today');
+  section('明日', g.tomorrow, '');
+  if (!g.overdue.length && !g.today.length && !g.tomorrow.length) {
+    const p = document.createElement('div');
+    p.className = 'briefing-none';
+    p.textContent = '今日・明日が期限のメモはありません。';
+    card.appendChild(p);
+  }
+  section('期限なし', g.undated, '');
+
+  const actions = document.createElement('div');
+  actions.className = 'briefing-actions';
+  const read = document.createElement('button');
+  read.type = 'button';
+  read.textContent = '🔊 読み上げ';
+  read.addEventListener('click', () => speakNow(briefingSpeech(briefingGroups())));
+  const list = document.createElement('button');
+  list.type = 'button';
+  list.textContent = '📝 一覧';
+  list.addEventListener('click', () => { renderMemos(); memoDialog.showModal(); });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = '閉じる';
+  close.addEventListener('click', () => { card.remove(); if (history.length === 0) renderAll(); });
+  actions.append(read, list, close);
+  card.appendChild(actions);
+
+  const empty = log.querySelector('.empty');
+  if (empty) empty.remove();
+  log.appendChild(card); // 会話の一番下（いま見ている位置）に出す
+  log.scrollTop = log.scrollHeight;
+}
+
+// その日初めて開いたときだけ出す（未完了メモがない日は出さない）
+function maybeShowBriefing() {
+  const today = todayYmd();
+  if (store.get(BRIEFING_KEY) === today) return;
+  store.set(BRIEFING_KEY, today);
+  if (Memo.open().length) showBriefing();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') maybeShowBriefing(); });
+
 // ===== 起動 =====
 renderMemos();
 updateSpeakButton();
 renderAll();
+maybeShowBriefing();
 // ===== 自動アップデート =====
 // ホーム画面から開いたアプリは前回の画面のまま再開されるため、開くたびに新しい版が出ていないか確認する
-const APP_VERSION = 8; // version.json と揃えて上げる
+const APP_VERSION = 9; // version.json と揃えて上げる
 async function checkForUpdate() {
   if (busy) return; // 返事を待っている間は再読み込みしない
   try {

@@ -158,3 +158,21 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 .memo-item.done .memo-body { color: var(--muted); text-decoration: line-through; }
 .memo-del { background: none; border: none; color: var(--muted); font-size: 13px; padding: 6px; }
 .settings-form h3 { margin: 8px 0 6px; font-size: 14px; color: var(--muted); }
+
+/* ===== 今日のメモ ===== */
+.briefing {
+  align-self: stretch; background: var(--bot); border: 1px solid var(--accent); border-radius: 16px;
+  padding: 12px 14px; line-height: 1.6; overflow-wrap: anywhere;
+}
+.briefing-head { font-weight: 700; font-size: 17px; }
+.briefing-hello { color: var(--muted); font-size: 14px; margin-bottom: 4px; }
+.briefing-title { font-weight: 700; font-size: 14px; margin-top: 8px; }
+.briefing-title.overdue { color: var(--error); }
+.briefing-title.today { color: var(--accent); }
+.briefing ul { margin: 2px 0 0; padding-left: 1.2em; }
+.briefing-none { margin-top: 6px; color: var(--muted); }
+.briefing-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.briefing-actions button {
+  flex: 1; min-width: 0; padding: 8px 6px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
+}
