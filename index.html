@@ -17,6 +17,7 @@
   <header class="topbar">
     <div class="brand"><span class="dot" aria-hidden="true"></span>Jervis</div>
     <div class="actions">
+      <button id="openMemo" class="icon-btn memo-btn" title="メモ・ToDo">📝<span id="memoBadge" class="badge" hidden>0</span></button>
       <button id="speakToggle" class="icon-btn" aria-pressed="false" title="返答を読み上げる">🔇</button>
       <button id="openSettings" class="icon-btn" title="設定">⚙️</button>
     </div>
@@ -69,6 +70,30 @@
     </form>
   </dialog>
 
+  <dialog id="memoDialog">
+    <div class="settings-form">
+      <h2>メモ・ToDo</h2>
+      <p class="hint">Jervisに「明日〇〇をやる、覚えておいて」「〇〇は終わった」と話しかけても追加・完了できます。</p>
+      <form id="memoAddForm" class="memo-add">
+        <input id="memoText" type="text" placeholder="新しいメモ" autocomplete="off">
+        <div class="row">
+          <input id="memoDue" type="date" aria-label="期限">
+          <button type="submit">追加</button>
+        </div>
+      </form>
+      <ul id="memoOpen" class="memo-list"></ul>
+      <p id="memoEmpty" class="hint">未完了のメモはありません。</p>
+      <div id="memoDoneWrap" hidden>
+        <h3>完了済み（最近の10件）</h3>
+        <ul id="memoDone" class="memo-list"></ul>
+      </div>
+      <form method="dialog" class="dialog-actions">
+        <button value="close" class="primary">閉じる</button>
+      </form>
+    </div>
+  </dialog>
+
+  <script src="memo.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -132,3 +132,24 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 .dialog-actions { display: flex; justify-content: flex-end; }
 .primary { background: var(--accent); color: var(--accent-text); border: none; border-radius: 10px; padding: 10px 20px; font-weight: 700; font-size: 16px; }
 .msg.note { align-self: flex-start; color: var(--muted); font-size: 12px; background: none; padding: 0 4px; margin-top: -6px; }
+
+/* ===== メモ ===== */
+.memo-btn { position: relative; }
+.badge {
+  position: absolute; top: 0; right: 0; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: var(--error); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.msg.memo-note { color: var(--accent); font-size: 13px; margin-top: -4px; }
+.memo-add { display: flex; flex-direction: column; gap: 8px; }
+.memo-add .row input { flex: 1; }
+.memo-add button { background: var(--accent); color: var(--accent-text); border: none; font-weight: 700; }
+.memo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.memo-item { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+.memo-item input[type="checkbox"] { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.memo-body { flex: 1; min-width: 0; word-break: break-word; line-height: 1.5; }
+.memo-due { font-size: 12px; color: var(--muted); }
+.memo-item.today .memo-due { color: var(--accent); font-weight: 700; }
+.memo-item.overdue .memo-due { color: var(--error); font-weight: 700; }
+.memo-item.done .memo-body { color: var(--muted); text-decoration: line-through; }
+.memo-del { background: none; border: none; color: var(--muted); font-size: 13px; padding: 6px; }
+.settings-form h3 { margin: 8px 0 6px; font-size: 14px; color: var(--muted); }
