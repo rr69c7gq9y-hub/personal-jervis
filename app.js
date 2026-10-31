@@ -113,13 +113,27 @@ class ApiError extends Error {
   }
 }
 
+const REQUEST_TIMEOUT_MS = 40000; // これを過ぎても返事がなければ、混雑とみなして次のモデルへ
+
 async function requestModel(model, body, apiKey) {
-  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  let res, data;
+  try {
+    res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    data = await res.json().catch(() => ({}));
+  } catch (e) {
+    // 時間切れ・通信断は「一時的なエラー」と同じ扱いにして再試行・切り替えさせる
+    const reason = e.name === 'AbortError' ? `${REQUEST_TIMEOUT_MS / 1000}秒以内に返事がありませんでした` : '通信できませんでした（電波を確認してください）';
+    throw new ApiError(504, { error: { message: reason } }, model);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new ApiError(res.status, data, model);
 
   const cand = data.candidates && data.candidates[0];
@@ -155,7 +169,7 @@ async function callGemini(messages, onStatus = () => {}) {
         lastError = e;
         const s = e.status;
         if (!s || s === 400 || s === 401 || s === 403) throw e; // キーや内容の問題は再試行しても直らない
-        if (s >= 500 && attempt === 0) {
+        if (s >= 500 && s !== 504 && attempt === 0) {
           onStatus(`混み合っています。もう一度試しています…（${model}）`);
           await sleep(1500);
           continue;
