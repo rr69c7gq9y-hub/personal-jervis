@@ -35,7 +35,10 @@
       <h2>設定</h2>
 
       <label>Gemini APIキー
-        <input id="apiKey" type="password" autocomplete="off" placeholder="AIza...">
+        <div class="row">
+          <input id="apiKey" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="AIza...">
+          <button type="button" id="toggleKey">表示</button>
+        </div>
       </label>
       <p class="hint">キーはこのスマホの中だけに保存され、Google以外には送られません。
         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">キーを取得（無料）</a></p>
