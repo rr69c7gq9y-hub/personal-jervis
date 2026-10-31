@@ -254,7 +254,11 @@ async function send(text) {
     results.forEach((r) => addBubble('note memo-note', r));
     if (results.length) renderMemos();
     const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
-    if (model !== primary) addBubble('note', `※混雑のため ${model} で返答しました`);
+    if (model !== primary) {
+      // 予備のモデルで成功したら、次からはそれを最初に使う（毎回失敗を待たないように）
+      store.set(KEYS.model, model);
+      addBubble('note', `※${primary} が混雑していたため ${model} で返答しました。次回からは ${model} を使います（⚙️で変更できます）`);
+    }
     speak(reply);
   } catch (e) {
     thinking.remove();
@@ -453,7 +457,7 @@ updateSpeakButton();
 renderAll();
 // ===== 自動アップデート =====
 // ホーム画面から開いたアプリは前回の画面のまま再開されるため、開くたびに新しい版が出ていないか確認する
-const APP_VERSION = 7; // version.json と揃えて上げる
+const APP_VERSION = 8; // version.json と揃えて上げる
 async function checkForUpdate() {
   if (busy) return; // 返事を待っている間は再読み込みしない
   try {
