@@ -195,3 +195,12 @@ function applyMemoActions(json) {
   }
   return results;
 }
+
+// 表示用：完成した命令を消し、書きかけの「<<」以降も隠す（少しずつ表示するとき用）
+function visibleText(acc) {
+  let t = String(acc || '').replace(MEMO_CMD, '');
+  const i = t.lastIndexOf('<<');
+  if (i >= 0 && t.indexOf('>>', i) < 0) t = t.slice(0, i);
+  if (/<$/.test(t)) t = t.slice(0, -1);
+  return t.replace(/\n{3,}/g, '\n\n').trimEnd();
+}
