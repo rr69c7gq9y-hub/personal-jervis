@@ -1,5 +1,5 @@
 // 画面ファイルだけをキャッシュする（会話やAPIの通信はキャッシュしない）
-const CACHE = 'jervis-v8';
+const CACHE = 'jervis-v9';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'memo.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
