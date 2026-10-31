@@ -147,9 +147,83 @@ async function requestModel(model, body, apiKey) {
   return text;
 }
 
+// ===== 返事を少しずつ受け取る（ストリーミング） =====
+const STREAM_IDLE_MS = 30000; // 文字が届き始めてから、これ以上止まったら打ち切る
+
+function partText(parts) {
+  // 考え中の内部メモ（thought）は表示しない
+  return (parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
+}
+
+async function requestModelStream(model, body, apiKey, onDelta) {
+  const ctrl = new AbortController();
+  let timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const bump = () => { clearTimeout(timer); timer = setTimeout(() => ctrl.abort(), STREAM_IDLE_MS); };
+  let acc = '';
+  let finishReason = '';
+  try {
+    const res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, data, model);
+    }
+    if (!res.body || !res.body.getReader) {
+      // 古いブラウザなど、少しずつ読めない場合はまとめて読む
+      const textAll = await res.text();
+      textAll.split('\n').forEach((line) => {
+        if (!line.startsWith('data:')) return;
+        try { const d = JSON.parse(line.slice(5)); const c = d.candidates && d.candidates[0]; acc += partText(c && c.content && c.content.parts); } catch { /* noop */ }
+      });
+      if (acc) onDelta(acc);
+    } else {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        bump();
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          let d;
+          try { d = JSON.parse(line.slice(5)); } catch { continue; }
+          if (d.error) throw new ApiError(d.error.code || 500, d, model);
+          const c = d.candidates && d.candidates[0];
+          if (c && c.finishReason) finishReason = c.finishReason;
+          const delta = partText(c && c.content && c.content.parts);
+          if (delta) { acc += delta; onDelta(acc); }
+        }
+      }
+    }
+  } catch (e) {
+    if (acc) return { text: acc.trim(), cut: true }; // 途中まで届いていれば、そこまでを返事として使う
+    if (e instanceof ApiError) throw e;
+    const reason = e.name === 'AbortError' ? `${REQUEST_TIMEOUT_MS / 1000}秒以内に返事がありませんでした` : '通信できませんでした（電波を確認してください）';
+    const err = new ApiError(504, { error: { message: reason } }, model);
+    err.network = e.name !== 'AbortError';
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!acc.trim()) throw new Error(`返答が空でした（理由: ${finishReason || '不明'}）。言い方を変えてもう一度試してください。`);
+  return { text: acc.trim(), cut: false };
+}
+
+let streamUnavailable = false;
+
 // onStatus: 再試行中などの状況を画面に出すためのコールバック
 // override: { system, contents, generationConfig } を渡すと、会話以外の用途（メモ抽出など）に使える
-async function callGemini(messages, onStatus = () => {}, override = null) {
+// onDelta を渡すと、返事を少しずつ受け取って表示できる（会話用）
+async function callGemini(messages, onStatus = () => {}, override = null, onDelta = null) {
   const apiKey = cleanKey(store.get(KEYS.apiKey, ''));
   if (!apiKey) throw new Error('APIキーが未設定です。右上の ⚙️ から設定してください。');
   const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -170,6 +244,16 @@ async function callGemini(messages, onStatus = () => {}, override = null) {
   for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        if (onDelta && !override && !streamUnavailable) {
+          try {
+            const r = await requestModelStream(model, body, apiKey, onDelta);
+            return { text: r.text, model, cut: r.cut };
+          } catch (e) {
+            if (!e.network) throw e;
+            // 少しずつ受け取る方式がこの環境で使えない場合は、以後まとめて受け取る方式に戻す
+            streamUnavailable = true;
+          }
+        }
         const text = await requestModel(model, body, apiKey);
         return { text, model };
       } catch (e) {
@@ -230,15 +314,35 @@ async function send(text) {
   autoResize();
 
   const thinking = addBubble('model thinking', '考えています…');
+  // 届いた分から表示する。メモの命令（<<memo-…>>）は書きかけも含めて隠す
+  let pending = null;
+  let frame = 0;
+  const onDelta = (acc) => {
+    pending = acc;
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+      thinking.className = 'msg model';
+      thinking.innerHTML = renderText(visibleText(pending));
+      if (nearBottom) log.scrollTop = log.scrollHeight;
+    });
+  };
   try {
-    const { text: raw, model } = await callGemini(history, (msg) => { thinking.textContent = msg; });
-    thinking.remove();
+    const { text: raw, model, cut } = await callGemini(history, (msg) => {
+      // 文字が届く前の再試行・切り替えの状況だけ出す
+      if (pending === null) thinking.textContent = msg;
+    }, null, onDelta);
+    if (frame) cancelAnimationFrame(frame);
     // 返答に含まれるメモ操作の命令を実行し、命令部分は表示しない
     let { text: shown, results } = applyMemoCommands(raw);
     const reply = shown || results.join('\n') || '（返答なし）';
     history.push({ role: 'model', text: reply });
     saveHistory();
-    addBubble('model', reply);
+    thinking.className = 'msg model';
+    thinking.innerHTML = renderText(reply);
+    log.scrollTop = log.scrollHeight;
+    if (cut) addBubble('note', '※通信が途中で切れたため、返事が途中までの可能性があります');
     // メモの依頼らしいのに命令が無かったときは、メモ抽出専用の呼び出しで補う（軽いモデルの書き忘れ対策）
     if (results.length === 0 && looksLikeMemoRequest(text)) {
       const working = addBubble('note', 'メモを整理しています…');
@@ -261,6 +365,7 @@ async function send(text) {
     }
     speak(reply);
   } catch (e) {
+    if (frame) cancelAnimationFrame(frame);
     thinking.remove();
     userBubble.remove(); // 入力欄に戻すので、送れなかった発言は画面からも消す
     // 失敗した発言は履歴から外す（次回送信時にuserが連続しないように）
@@ -574,7 +679,7 @@ renderAll();
 maybeShowBriefing();
 // ===== 自動アップデート =====
 // ホーム画面から開いたアプリは前回の画面のまま再開されるため、開くたびに新しい版が出ていないか確認する
-const APP_VERSION = 9; // version.json と揃えて上げる
+const APP_VERSION = 10; // version.json と揃えて上げる
 async function checkForUpdate() {
   if (busy) return; // 返事を待っている間は再読み込みしない
   try {
