@@ -155,7 +155,7 @@ async function callGemini(messages, onStatus = () => {}) {
   const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
 
   const body = {
-    systemInstruction: { parts: [{ text: store.get(KEYS.systemPrompt, DEFAULT_SYSTEM_PROMPT) }] },
+    systemInstruction: { parts: [{ text: store.get(KEYS.systemPrompt, DEFAULT_SYSTEM_PROMPT) + '\n' + memoSystemPrompt() }] },
     contents: messages.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
   };
 
@@ -224,11 +224,16 @@ async function send(text) {
 
   const thinking = addBubble('model thinking', '考えています…');
   try {
-    const { text: reply, model } = await callGemini(history, (msg) => { thinking.textContent = msg; });
+    const { text: raw, model } = await callGemini(history, (msg) => { thinking.textContent = msg; });
     thinking.remove();
+    // 返答に含まれるメモ操作の命令を実行し、命令部分は表示しない
+    const { text: shown, results } = applyMemoCommands(raw);
+    const reply = shown || results.join('\n') || '（返答なし）';
     history.push({ role: 'model', text: reply });
     saveHistory();
     addBubble('model', reply);
+    results.forEach((r) => addBubble('note memo-note', r));
+    if (results.length) renderMemos();
     const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
     if (model !== primary) addBubble('note', `※混雑のため ${model} で返答しました`);
     speak(reply);
@@ -363,7 +368,68 @@ $('toggleKey').addEventListener('click', () => {
   $('toggleKey').textContent = show ? '隠す' : '表示';
 });
 
+// ===== メモ画面 =====
+const memoDialog = $('memoDialog');
+
+function memoItem(m) {
+  const li = document.createElement('li');
+  li.className = 'memo-item' + (m.done ? ' done' : '') + (!m.done && m.due && m.due < todayYmd() ? ' overdue' : '') + (!m.done && m.due === todayYmd() ? ' today' : '');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = !!m.done;
+  cb.setAttribute('aria-label', '完了');
+  cb.addEventListener('change', () => { Memo.setDone(m.id, cb.checked); renderMemos(); });
+  const body = document.createElement('div');
+  body.className = 'memo-body';
+  const t = document.createElement('div');
+  t.textContent = m.text;
+  body.appendChild(t);
+  if (m.due) {
+    const d = document.createElement('div');
+    d.className = 'memo-due';
+    d.textContent = dueLabel(m.due);
+    body.appendChild(d);
+  }
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'memo-del';
+  del.textContent = '削除';
+  del.addEventListener('click', () => {
+    if (!confirm(`「${m.text}」を削除しますか？`)) return;
+    Memo.remove(m.id);
+    renderMemos();
+  });
+  li.append(cb, body, del);
+  return li;
+}
+
+function renderMemos() {
+  const open = Memo.open();
+  const done = Memo.load().filter((m) => m.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 10);
+  const openList = $('memoOpen');
+  const doneList = $('memoDone');
+  openList.replaceChildren(...open.map(memoItem));
+  doneList.replaceChildren(...done.map(memoItem));
+  $('memoEmpty').hidden = open.length > 0;
+  $('memoDoneWrap').hidden = done.length === 0;
+  const badge = $('memoBadge');
+  badge.textContent = open.length;
+  badge.hidden = open.length === 0;
+}
+
+$('openMemo').addEventListener('click', () => { renderMemos(); memoDialog.showModal(); });
+$('memoAddForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = $('memoText').value.trim();
+  if (!text) return;
+  Memo.add(text, $('memoDue').value);
+  $('memoText').value = '';
+  $('memoDue').value = '';
+  renderMemos();
+});
+
 // ===== 起動 =====
+renderMemos();
 updateSpeakButton();
 renderAll();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
