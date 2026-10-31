@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Jervis</title>
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Jervis">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot" aria-hidden="true"></span>Jervis</div>
+    <div class="actions">
+      <button id="speakToggle" class="icon-btn" aria-pressed="false" title="返答を読み上げる">🔇</button>
+      <button id="openSettings" class="icon-btn" title="設定">⚙️</button>
+    </div>
+  </header>
+
+  <main id="log" class="log" aria-live="polite"></main>
+
+  <form id="composer" class="composer">
+    <button type="button" id="micBtn" class="icon-btn mic" title="音声入力" hidden>🎤</button>
+    <textarea id="input" rows="1" placeholder="話しかけてください" enterkeyhint="send"></textarea>
+    <button type="submit" id="sendBtn" class="send">送信</button>
+  </form>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>設定</h2>
+
+      <label>Gemini APIキー
+        <input id="apiKey" type="password" autocomplete="off" placeholder="AIza...">
+      </label>
+      <p class="hint">キーはこのスマホの中だけに保存され、Google以外には送られません。
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">キーを取得（無料）</a></p>
+
+      <label>モデル
+        <div class="row">
+          <input id="model" type="text" list="modelList" autocomplete="off">
+          <button type="button" id="loadModels">一覧取得</button>
+        </div>
+        <datalist id="modelList"></datalist>
+      </label>
+      <p class="hint" id="modelHint">うまく動かないときは「一覧取得」で使えるモデルを確認してください。</p>
+
+      <label>Jervisの性格・ルール
+        <textarea id="systemPrompt" rows="6"></textarea>
+      </label>
+      <button type="button" id="resetPrompt" class="link-btn">初期値に戻す</button>
+
+      <div class="danger">
+        <button type="button" id="clearHistory">会話履歴を消す</button>
+      </div>
+
+      <p class="hint warn">無料枠では、送った内容がGoogleのサービス改善に使われる場合があります。乗務員の個人情報など、社外に出せない情報は入力しないでください。</p>
+
+      <div class="dialog-actions">
+        <button value="close" class="primary">閉じる</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
