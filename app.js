@@ -86,9 +86,24 @@ function renderAll() {
   history.forEach((m) => addBubble(m.role, m.text));
 }
 
+// ===== APIキーの整形とチェック =====
+// コピー時に混ざりやすい空白・改行・見えない文字を除き、全角英数字を半角にする
+function cleanKey(raw) {
+  return String(raw || '')
+    .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, '');
+}
+// Googleのキーは通常「AIza」で始まる39文字
+function keyProblem(key) {
+  if (!key) return 'APIキーが未入力です。';
+  if (!key.startsWith('AIza')) return `キーが「AIza」で始まっていません（先頭: ${key.slice(0, 4)}…）。キー以外の文字列をコピーしている可能性があります。`;
+  if (key.length !== 39) return `キーの文字数が${key.length}文字です（正しいキーは39文字）。コピーが途中で切れているか、余分な文字が入っています。`;
+  return '';
+}
+
 // ===== Gemini API =====
 async function callGemini(messages) {
-  const apiKey = store.get(KEYS.apiKey, '').trim();
+  const apiKey = cleanKey(store.get(KEYS.apiKey, ''));
   if (!apiKey) throw new Error('APIキーが未設定です。右上の ⚙️ から設定してください。');
   const model = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
 
@@ -119,7 +134,10 @@ async function callGemini(messages) {
 
 function explainError(status, data) {
   const msg = (data && data.error && data.error.message) || '';
-  if (status === 400 && /API key/i.test(msg)) return 'APIキーが正しくないようです。設定を確認してください。';
+  if (status === 400 && /API key/i.test(msg)) {
+    const hint = keyProblem(store.get(KEYS.apiKey, ''));
+    return `APIキーが正しくないようです。${hint || 'キーを作り直して貼り直してください。'}（Googleの応答: ${msg}）`;
+  }
   if (status === 403) return 'APIキーに権限がありません。キーを作り直すか、設定を確認してください。';
   if (status === 404) return `モデル「${store.get(KEYS.model, DEFAULT_MODEL)}」が見つかりません。設定の「一覧取得」で使えるモデルを選んでください。`;
   if (status === 429) return '無料枠の利用上限に達しました。少し時間をおいてから試してください（1日の上限は太平洋時間の0時＝日本時間16〜17時ごろにリセット）。';
@@ -128,7 +146,7 @@ function explainError(status, data) {
 }
 
 async function listModels() {
-  const apiKey = store.get(KEYS.apiKey, '').trim();
+  const apiKey = cleanKey(store.get(KEYS.apiKey, ''));
   if (!apiKey) throw new Error('先にAPIキーを入力してください。');
   const res = await fetch(`${API_BASE}/models?pageSize=200`, { headers: { 'x-goog-api-key': apiKey } });
   const data = await res.json().catch(() => ({}));
@@ -252,7 +270,7 @@ $('openSettings').addEventListener('click', () => {
   settings.showModal();
 });
 settings.addEventListener('close', () => {
-  store.set(KEYS.apiKey, $('apiKey').value.trim());
+  store.set(KEYS.apiKey, cleanKey($('apiKey').value));
   store.set(KEYS.model, $('model').value.trim() || DEFAULT_MODEL);
   store.set(KEYS.systemPrompt, $('systemPrompt').value.trim() || DEFAULT_SYSTEM_PROMPT);
   if (history.length === 0) renderAll();
@@ -266,7 +284,10 @@ $('clearHistory').addEventListener('click', () => {
 });
 $('loadModels').addEventListener('click', async () => {
   const hint = $('modelHint');
-  store.set(KEYS.apiKey, $('apiKey').value.trim());
+  const key = cleanKey($('apiKey').value);
+  $('apiKey').value = key;
+  store.set(KEYS.apiKey, key);
+  const problem = keyProblem(key);
   hint.textContent = '取得中…';
   try {
     const names = await listModels();
@@ -275,8 +296,16 @@ $('loadModels').addEventListener('click', async () => {
       ? `使えるモデル: ${names.join(', ')}（入力欄をタップすると候補が出ます）`
       : '使えるモデルが見つかりませんでした。';
   } catch (e) {
-    hint.textContent = e.message;
+    hint.textContent = problem && !e.message.includes(problem) ? `${e.message} ${problem}` : e.message;
   }
+});
+
+// キーの表示・非表示（貼り付けた内容を目で確認できるように）
+$('toggleKey').addEventListener('click', () => {
+  const el = $('apiKey');
+  const show = el.type === 'password';
+  el.type = show ? 'text' : 'password';
+  $('toggleKey').textContent = show ? '隠す' : '表示';
 });
 
 // ===== 起動 =====
