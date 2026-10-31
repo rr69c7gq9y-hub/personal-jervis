@@ -102,24 +102,25 @@ function keyProblem(key) {
 }
 
 // ===== Gemini API =====
-async function callGemini(messages) {
-  const apiKey = cleanKey(store.get(KEYS.apiKey, ''));
-  if (!apiKey) throw new Error('APIキーが未設定です。右上の ⚙️ から設定してください。');
-  const model = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+// 混雑（5xx）や回数上限（429）のときに順に試す予備のモデル
+const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const body = {
-    systemInstruction: { parts: [{ text: store.get(KEYS.systemPrompt, DEFAULT_SYSTEM_PROMPT) }] },
-    contents: messages.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-  };
+class ApiError extends Error {
+  constructor(status, data, model) {
+    super(explainError(status, data, model));
+    this.status = status;
+  }
+}
 
+async function requestModel(model, body, apiKey) {
   const res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(body),
   });
-
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(explainError(res.status, data));
+  if (!res.ok) throw new ApiError(res.status, data, model);
 
   const cand = data.candidates && data.candidates[0];
   const text = cand && cand.content && cand.content.parts
@@ -132,16 +133,53 @@ async function callGemini(messages) {
   return text;
 }
 
-function explainError(status, data) {
+// onStatus: 再試行中などの状況を画面に出すためのコールバック
+async function callGemini(messages, onStatus = () => {}) {
+  const apiKey = cleanKey(store.get(KEYS.apiKey, ''));
+  if (!apiKey) throw new Error('APIキーが未設定です。右上の ⚙️ から設定してください。');
+  const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
+
+  const body = {
+    systemInstruction: { parts: [{ text: store.get(KEYS.systemPrompt, DEFAULT_SYSTEM_PROMPT) }] },
+    contents: messages.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
+  };
+
+  let lastError;
+  for (const model of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const text = await requestModel(model, body, apiKey);
+        return { text, model };
+      } catch (e) {
+        lastError = e;
+        const s = e.status;
+        if (!s || s === 400 || s === 401 || s === 403) throw e; // キーや内容の問題は再試行しても直らない
+        if (s >= 500 && attempt === 0) {
+          onStatus(`混み合っています。もう一度試しています…（${model}）`);
+          await sleep(1500);
+          continue;
+        }
+        break; // 404・429・再度の5xx → 次のモデルへ
+      }
+    }
+    const next = models[models.indexOf(model) + 1];
+    if (next) onStatus(`別のモデルで試しています…（${next}）`);
+  }
+  throw lastError;
+}
+
+function explainError(status, data, model) {
   const msg = (data && data.error && data.error.message) || '';
+  model = model || store.get(KEYS.model, DEFAULT_MODEL);
   if (status === 400 && /API key/i.test(msg)) {
     const hint = keyProblem(store.get(KEYS.apiKey, ''));
     return `APIキーが正しくないようです。${hint || 'キーを作り直して貼り直してください。'}（Googleの応答: ${msg}）`;
   }
   if (status === 403) return 'APIキーに権限がありません。キーを作り直すか、設定を確認してください。';
-  if (status === 404) return `モデル「${store.get(KEYS.model, DEFAULT_MODEL)}」が見つかりません。設定の「一覧取得」で使えるモデルを選んでください。`;
+  if (status === 404) return `モデル「${model}」が見つかりません。設定の「一覧取得」で使えるモデルを選んでください。`;
   if (status === 429) return '無料枠の利用上限に達しました。少し時間をおいてから試してください（1日の上限は太平洋時間の0時＝日本時間16〜17時ごろにリセット）。';
-  if (status >= 500) return 'Google側で一時的なエラーが出ています。少し待ってから試してください。';
+  if (status >= 500) return `Google側が混み合っているか、一時的なエラーです。予備のモデルでも返事がありませんでした。数分待ってから試してください。（${status}: ${msg || '詳細なし'}）`;
   return `エラー（${status}）: ${msg || '原因不明'}`;
 }
 
@@ -166,20 +204,23 @@ async function send(text) {
 
   history.push({ role: 'user', text });
   saveHistory();
-  addBubble('user', text);
+  const userBubble = addBubble('user', text);
   input.value = '';
   autoResize();
 
   const thinking = addBubble('model thinking', '考えています…');
   try {
-    const reply = await callGemini(history);
+    const { text: reply, model } = await callGemini(history, (msg) => { thinking.textContent = msg; });
     thinking.remove();
     history.push({ role: 'model', text: reply });
     saveHistory();
     addBubble('model', reply);
+    const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+    if (model !== primary) addBubble('note', `※混雑のため ${model} で返答しました`);
     speak(reply);
   } catch (e) {
     thinking.remove();
+    userBubble.remove(); // 入力欄に戻すので、送れなかった発言は画面からも消す
     // 失敗した発言は履歴から外す（次回送信時にuserが連続しないように）
     history.pop();
     saveHistory();
