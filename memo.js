@@ -96,7 +96,9 @@ ${lines}
 <<memo-add|期限|内容>>  … 期限は YYYY-MM-DD。「明日」「来週月曜」などは今日の日付から計算する。期限がなければ空にする（例: <<memo-add||牛乳を買う>>）
 <<memo-done|番号>>  … 完了にする（番号は上の一覧の[ ]内の数字）
 <<memo-del|番号>>   … 削除する
+例: ボス「明日の朝礼で安全運転を呼びかける、覚えておいて」→ あなた「承知しました。明日の朝礼の件、メモしました。」の次の行に <<memo-add|(明日の日付)|朝礼で安全運転を呼びかける>>
 ルール:
+・「メモしました」「記憶しました」「完了にしました」と言うときは、必ず対応する命令を書く。命令がなければメモは保存されない。
 ・頼まれていないのに命令を書かない。どのメモか曖昧なら、命令は書かずにボスに確認する。
 ・命令以外の本文では「メモしました」「完了にしました」のように短く伝える。
 ・「今日やることは？」「メモを見せて」と聞かれたら、上の一覧から答える（命令は不要）。`;
@@ -125,4 +127,71 @@ function applyMemoCommands(reply) {
     return '';
   }).replace(/\n{3,}/g, '\n\n').trim();
   return { text: clean, results };
+}
+
+// ===== 書き忘れ対策：メモ抽出専用の呼び出し =====
+const MEMO_REQUEST_WORDS = /(覚えて|おぼえて|憶えて|メモ|記憶|忘れ|リマインド|控えて|登録|やること|ToDo|todo|タスク|終わった|おわった|済んだ|すんだ|済み|完了|やった|消して|けして|削除)/i;
+function looksLikeMemoRequest(text) {
+  return MEMO_REQUEST_WORDS.test(text);
+}
+
+function memoExtractRequest(userText, replyText) {
+  const now = new Date();
+  const open = Memo.open();
+  const list = open.length ? open.map((m) => `[${m.id}] ${m.text}${m.due ? `（期限: ${m.due}）` : ''}`).join('\n') : '（なし）';
+  const system = `あなたはメモ帳の操作だけを判断する係です。今日は ${toYmd(now)}（${WEEKDAYS[now.getDay()]}曜日）です。
+現在の未完了メモ:
+${list}
+
+ユーザーの発言から、メモ帳に対して行う操作をJSONで返してください。
+- 新しく覚えておくこと → {"op":"add","text":"内容（短く）","due":"YYYY-MM-DD または空文字"}。「明日」「来週月曜」などは今日から計算する
+- 終わった・済んだこと → {"op":"done","id":番号}
+- 消してほしいこと → {"op":"del","id":番号}
+- 質問や雑談など、操作が不要なら actions は空配列
+- どのメモか判断できない場合は操作しない`;
+  return {
+    system,
+    contents: [{ role: 'user', parts: [{ text: `ユーザーの発言: ${userText}\n（アシスタントの返事: ${replyText}）` }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          actions: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                op: { type: 'STRING', enum: ['add', 'done', 'del'] },
+                text: { type: 'STRING' },
+                due: { type: 'STRING' },
+                id: { type: 'INTEGER' },
+              },
+              required: ['op'],
+            },
+          },
+        },
+        required: ['actions'],
+      },
+    },
+  };
+}
+
+function applyMemoActions(json) {
+  let data;
+  try { data = JSON.parse(String(json).replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return []; }
+  const results = [];
+  for (const a of (data && Array.isArray(data.actions) ? data.actions : [])) {
+    if (a.op === 'add' && a.text) {
+      const m = Memo.add(a.text, a.due || '');
+      if (m) results.push(`📝 追加: ${m.text}${m.due ? `（${dueLabel(m.due)}）` : ''}`);
+    } else if (a.op === 'done' && a.id != null) {
+      const m = Memo.setDone(a.id);
+      if (m) results.push(`✅ 完了: ${m.text}`);
+    } else if (a.op === 'del' && a.id != null) {
+      const m = Memo.remove(a.id);
+      if (m) results.push(`🗑 削除: ${m.text}`);
+    }
+  }
+  return results;
 }

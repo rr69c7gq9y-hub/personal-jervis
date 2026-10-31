@@ -148,16 +148,23 @@ async function requestModel(model, body, apiKey) {
 }
 
 // onStatus: 再試行中などの状況を画面に出すためのコールバック
-async function callGemini(messages, onStatus = () => {}) {
+// override: { system, contents, generationConfig } を渡すと、会話以外の用途（メモ抽出など）に使える
+async function callGemini(messages, onStatus = () => {}, override = null) {
   const apiKey = cleanKey(store.get(KEYS.apiKey, ''));
   if (!apiKey) throw new Error('APIキーが未設定です。右上の ⚙️ から設定してください。');
   const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
   const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
 
-  const body = {
-    systemInstruction: { parts: [{ text: store.get(KEYS.systemPrompt, DEFAULT_SYSTEM_PROMPT) + '\n' + memoSystemPrompt() }] },
-    contents: messages.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-  };
+  const body = override
+    ? {
+      systemInstruction: { parts: [{ text: override.system }] },
+      contents: override.contents,
+      ...(override.generationConfig ? { generationConfig: override.generationConfig } : {}),
+    }
+    : {
+      systemInstruction: { parts: [{ text: store.get(KEYS.systemPrompt, DEFAULT_SYSTEM_PROMPT) + '\n' + memoSystemPrompt() }] },
+      contents: messages.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
+    };
 
   let lastError;
   for (const model of models) {
@@ -227,11 +234,23 @@ async function send(text) {
     const { text: raw, model } = await callGemini(history, (msg) => { thinking.textContent = msg; });
     thinking.remove();
     // 返答に含まれるメモ操作の命令を実行し、命令部分は表示しない
-    const { text: shown, results } = applyMemoCommands(raw);
+    let { text: shown, results } = applyMemoCommands(raw);
     const reply = shown || results.join('\n') || '（返答なし）';
     history.push({ role: 'model', text: reply });
     saveHistory();
     addBubble('model', reply);
+    // メモの依頼らしいのに命令が無かったときは、メモ抽出専用の呼び出しで補う（軽いモデルの書き忘れ対策）
+    if (results.length === 0 && looksLikeMemoRequest(text)) {
+      const working = addBubble('note', 'メモを整理しています…');
+      try {
+        const { text: json } = await callGemini(null, () => {}, memoExtractRequest(text, reply));
+        results = applyMemoActions(json);
+      } catch { /* 失敗したら下で警告を出す */ }
+      working.remove();
+      if (results.length === 0 && /(メモ|記憶|覚え|控え|登録|完了|削除)/.test(reply)) {
+        results = ['⚠ メモの一覧は変わっていません。必要なら📝から追加してください'];
+      }
+    }
     results.forEach((r) => addBubble('note memo-note', r));
     if (results.length) renderMemos();
     const primary = store.get(KEYS.model, DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -434,7 +453,7 @@ updateSpeakButton();
 renderAll();
 // ===== 自動アップデート =====
 // ホーム画面から開いたアプリは前回の画面のまま再開されるため、開くたびに新しい版が出ていないか確認する
-const APP_VERSION = 6; // version.json と揃えて上げる
+const APP_VERSION = 7; // version.json と揃えて上げる
 async function checkForUpdate() {
   if (busy) return; // 返事を待っている間は再読み込みしない
   try {
